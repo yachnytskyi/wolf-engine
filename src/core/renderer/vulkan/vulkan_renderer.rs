@@ -1,83 +1,66 @@
-// === Logging macros for standardized output: error, warning, info ===
+use crate::core::renderer::api::Renderer;
+use crate::error::Result;
 use log::{error, info, warn};
-
-// === Vulkanalia: Vulkan bindings and platform/window integration ===
-use vulkanalia::loader::{LIBRARY, LibloadingLoader};  // For loading the Vulkan shared library
-use vulkanalia::prelude::v1_0::*;                     // Main Vulkan types/functions
-use vulkanalia::vk::EntryV1_1;                        // For enumerate_instance_version (Vulkan 1.1+)
-use vulkanalia::vk::KhrSurfaceExtension;              // Surface extension trait
-use vulkanalia::vk::{self, ExtDebugUtilsExtension, KhrSwapchainExtension}; // KhrSwapchain trait needed for swapchain
-use vulkanalia::window as vk_window;                  // Winit/Vulkanalia window helpers
-use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle}; // For cross-platform window handles
-
-// === Winit: cross-platform window/event system ===
+use vulkanalia::loader::{LIBRARY, LibloadingLoader};
+use vulkanalia::prelude::v1_0::*;
+use vulkanalia::vk::EntryV1_1;
+use vulkanalia::vk::KhrSurfaceExtension;
+use vulkanalia::vk::{self, ExtDebugUtilsExtension, KhrSwapchainExtension};
+use vulkanalia::window as vk_window;
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::{
-    application::ApplicationHandler,         // App main event handler trait
-    event::WindowEvent,                      // Window events (resized, closed, etc.)
-    event_loop::{ActiveEventLoop, ControlFlow, EventLoop}, // Event loop types
-    window::{Window, WindowAttributes, WindowId},          // Window types
+    event::WindowEvent,
+    event_loop::ActiveEventLoop,
+    window::{Window, WindowId},
 };
 
-// === Custom error handling type for application robustness ===
-use wolf_engine::error::AppError;
-type Result<T> = std::result::Result<T, AppError>; // Alias for our Result type
-
-// === Portability extension name needed on some platforms (macOS/MoltenVK) ===
 const KHR_PORTABILITY_SUBSET_EXTENSION_NAME: &std::ffi::CStr =
     unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(b"VK_KHR_portability_subset\0") };
 
-//---------------------------------------------------
-// Core application state struct: holds all Vulkan and window handles
 #[derive(Default)]
-struct App {
-    window: Option<Window>,                           // Main application window
-    entry: Option<Entry>,                             // Vulkan library entry point
-    instance: Option<Instance>,                       // Vulkan instance handle
-    debug: Option<vk::DebugUtilsMessengerEXT>,        // Validation/debug messenger
-    surface: Option<vk::SurfaceKHR>,                  // Vulkan presentation surface
-    physical_device: Option<vk::PhysicalDevice>,      // Selected GPU handle
-    device: Option<Device>,                           // Logical device handle
-    graphics_queue: Option<vk::Queue>,                // Graphics command queue
-    present_queue: Option<vk::Queue>,                 // Presentation queue
-    queue_family_indices: Option<(u32, u32)>,         // (graphics_family, present_family)
+pub struct VulkanRenderer {
+    // Removed Option<Window>; it's not needed and not clonable
+    entry: Option<Entry>,
+    instance: Option<Instance>,
+    debug: Option<vk::DebugUtilsMessengerEXT>,
+    surface: Option<vk::SurfaceKHR>,
+    physical_device: Option<vk::PhysicalDevice>,
+    device: Option<Device>,
+    graphics_queue: Option<vk::Queue>,
+    present_queue: Option<vk::Queue>,
+    queue_family_indices: Option<(u32, u32)>,
 
-    swapchain: Option<vk::SwapchainKHR>,              // Swapchain object (images to present)
-    swapchain_images: Vec<vk::Image>,                 // Actual swapchain image handles
-    swapchain_image_views: Vec<vk::ImageView>,        // Views for each swapchain image
-    swapchain_format: Option<vk::Format>,             // Image format (e.g., BGRA8)
-    swapchain_extent: Option<vk::Extent2D>,           // Dimensions of the swapchain images
+    swapchain: Option<vk::SwapchainKHR>,
+    swapchain_images: Vec<vk::Image>,
+    swapchain_image_views: Vec<vk::ImageView>,
+    swapchain_format: Option<vk::Format>,
+    swapchain_extent: Option<vk::Extent2D>,
 
-    render_pass: Option<vk::RenderPass>,              // Render pass object
-    framebuffers: Vec<vk::Framebuffer>,               // One framebuffer per swapchain image
+    render_pass: Option<vk::RenderPass>,
+    framebuffers: Vec<vk::Framebuffer>,
 }
 
-impl App {
-    /// Creates the Vulkan swapchain, gets images, creates image views
+impl VulkanRenderer {
     fn create_swapchain(&mut self) {
         let instance = self.instance.as_ref().unwrap();
         let device = self.device.as_ref().unwrap();
         let surface = self.surface.unwrap();
         let physical_device = self.physical_device.unwrap();
 
-        // --- Query supported surface capabilities (image counts, extents, transforms, etc.) ---
         let surface_caps = unsafe {
             instance
                 .get_physical_device_surface_capabilities_khr(physical_device, surface)
                 .unwrap()
         };
-
-        // --- Query supported surface image formats (pixel layouts) ---
         let surface_formats = unsafe {
             instance
                 .get_physical_device_surface_formats_khr(physical_device, surface)
                 .unwrap()
         };
-        // Pick SRGB 8-bit BGRA if available; fallback to the first supported
         let format = surface_formats
             .iter()
             .find(|f| f.format == vk::Format::B8G8R8A8_SRGB)
             .unwrap_or(&surface_formats[0]);
-        // Use the current extent if provided, otherwise default to 800x600
         let extent = match surface_caps.current_extent.width {
             std::u32::MAX => vk::Extent2D {
                 width: 800,
@@ -85,31 +68,22 @@ impl App {
             },
             _ => surface_caps.current_extent,
         };
-
-        // --- Query supported present modes (FIFO=vsync, MAILBOX=triple-buffered, etc.) ---
         let present_modes = unsafe {
             instance
                 .get_physical_device_surface_present_modes_khr(physical_device, surface)
                 .unwrap()
         };
-        // Prefer MAILBOX for low latency if available, otherwise use FIFO (guaranteed available)
         let present_mode = if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             vk::PresentModeKHR::MAILBOX
         } else {
             vk::PresentModeKHR::FIFO
         };
-
-        // --- Select how many images in the swapchain (triple buffering if possible) ---
         let _queue_family_indices = self.queue_family_indices.unwrap();
-        let image_count = surface_caps.min_image_count + 1;
-        let image_count =
-            if surface_caps.max_image_count > 0 && image_count > surface_caps.max_image_count {
-                surface_caps.max_image_count
-            } else {
-                image_count
-            };
+        let mut image_count = surface_caps.min_image_count + 1;
+        if surface_caps.max_image_count > 0 && image_count > surface_caps.max_image_count {
+            image_count = surface_caps.max_image_count;
+        }
 
-        // --- Create the swapchain itself ---
         let swapchain_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(surface)
             .min_image_count(image_count)
@@ -127,7 +101,6 @@ impl App {
         let swapchain = unsafe { device.create_swapchain_khr(&swapchain_info, None) }
             .expect("Failed to create swapchain");
 
-        // --- Get the swapchain images and create image views for each ---
         let images = unsafe { device.get_swapchain_images_khr(swapchain).unwrap() };
         let image_views: Vec<_> = images
             .iter()
@@ -150,7 +123,6 @@ impl App {
             })
             .collect();
 
-        // --- Store created objects in app state ---
         self.swapchain = Some(swapchain);
         self.swapchain_images = images;
         self.swapchain_image_views = image_views;
@@ -159,36 +131,11 @@ impl App {
 
         info!("✅ Swapchain and image views created!");
     }
-}
 
-//---------------------------------------------------
-// Vulkan debug callback: validation/output from the driver/layers
-unsafe extern "system" fn debug_callback(
-    sev: vk::DebugUtilsMessageSeverityFlagsEXT, // Message severity (error, warning, info)
-    ty: vk::DebugUtilsMessageTypeFlagsEXT,      // Message type (general, validation, performance)
-    data: *const vk::DebugUtilsMessengerCallbackDataEXT, // The actual message data
-    _ud: *mut std::ffi::c_void,                 // User data (unused here)
-) -> vk::Bool32 {
-    // Convert the message C string to Rust String
-    let message = unsafe { std::ffi::CStr::from_ptr((*data).message).to_string_lossy() };
-    // Route to appropriate logger by severity
-    if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
-        error!("[{ty:?}] {message}");
-    } else if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
-        warn!("[{ty:?}] {message}");
-    } else {
-        info!("[{ty:?}] {message}");
-    }
-    vk::FALSE // VK_FALSE = do not abort, just log
-}
-
-impl App {
-    /// Creates a simple render pass (one color attachment, no depth/stencil)
     fn create_render_pass(&mut self) {
         let device = self.device.as_ref().unwrap();
         let format = self.swapchain_format.unwrap();
 
-        // --- Describe a single color attachment (the swapchain image) ---
         let color_attachment = vk::AttachmentDescription::builder()
             .format(format)
             .samples(vk::SampleCountFlags::_1)
@@ -199,17 +146,14 @@ impl App {
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
-        // --- Reference to the color attachment in the subpass ---
         let color_attachment_ref = vk::AttachmentReference::builder()
             .attachment(0)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
-        // --- Create one subpass that uses the color attachment ---
         let subpass = vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(std::slice::from_ref(&color_attachment_ref));
 
-        // --- Build the render pass from the above ---
         let render_pass_info = vk::RenderPassCreateInfo::builder()
             .attachments(std::slice::from_ref(&color_attachment))
             .subpasses(std::slice::from_ref(&subpass));
@@ -220,10 +164,7 @@ impl App {
         self.render_pass = Some(render_pass);
         info!("✅ Render pass created!");
     }
-}
 
-impl App {
-    /// Create a framebuffer for each swapchain image view, using the render pass
     fn create_framebuffers(&mut self) {
         let device = self.device.as_ref().unwrap();
         let render_pass = self.render_pass.unwrap();
@@ -248,39 +189,46 @@ impl App {
 
         info!("✅ Framebuffers created!");
     }
+
+    // Debug callback (wrap all unsafe ops in explicit unsafe blocks)
+    unsafe extern "system" fn debug_callback(
+        sev: vk::DebugUtilsMessageSeverityFlagsEXT,
+        ty: vk::DebugUtilsMessageTypeFlagsEXT,
+        data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+        _ud: *mut std::ffi::c_void,
+    ) -> vk::Bool32 {
+        let message = unsafe { std::ffi::CStr::from_ptr((*data).message).to_string_lossy() };
+        if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+            error!("[{ty:?}] {message}");
+        } else if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+            warn!("[{ty:?}] {message}");
+        } else {
+            info!("[{ty:?}] {message}");
+        }
+        vk::FALSE
+    }
 }
 
-//---------------------------------------------------
-// Main application entry point (Winit event handler trait)
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // --- 1. Create the main application window ---
-        let window = event_loop
-            .create_window(WindowAttributes::default())
-            .expect("Failed to create window");
+impl Renderer for VulkanRenderer {
+    fn initialize(&mut self, window: &Window, _event_loop: &ActiveEventLoop) -> Result<()> {
+        let loader = unsafe { LibloadingLoader::new(LIBRARY) }?;
+        let entry = unsafe { Entry::new(loader) }?;
 
-        // --- 2. Load Vulkan shared library and create an entry point object ---
-        let loader =
-            unsafe { LibloadingLoader::new(LIBRARY) }.expect("Failed to load Vulkan loader");
-        let entry = unsafe { Entry::new(loader) }.expect("Failed to create Vulkan entry");
-
-        // --- 3. Gather instance extensions required by Winit for windowing support ---
-        let mut exts: Vec<*const i8> = vk_window::get_required_instance_extensions(&window)
+        let mut exts: Vec<*const i8> = vk_window::get_required_instance_extensions(window)
             .iter()
             .map(|e| e.as_ptr())
             .collect();
-        exts.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr()); // Add debug extension for validation
+        exts.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
         #[cfg(target_os = "macos")]
-        exts.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr()); // For MoltenVK/Apple
+        exts.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
 
-        // --- 4. Enable validation layers if available ---
         let available_layers: Vec<String> = unsafe {
             entry
                 .enumerate_instance_layer_properties()
                 .unwrap()
                 .iter()
                 .map(|p| {
-                    std::ffi::CStr::from_ptr(p.layer_name.as_ptr())
+                    { std::ffi::CStr::from_ptr(p.layer_name.as_ptr()) }
                         .to_string_lossy()
                         .into_owned()
                 })
@@ -295,27 +243,23 @@ impl ApplicationHandler for App {
             info!("✅ Validation layer enabled");
         }
 
-        // --- 5. Instance creation flags (macOS needs portability flag) ---
         let mut flags = vk::InstanceCreateFlags::empty();
         #[cfg(target_os = "macos")]
         {
             flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
         }
 
-        // --- 6. Query Vulkan version supported by the driver ---
         let supported = unsafe {
             entry
                 .enumerate_instance_version()
                 .expect("Failed to query Vulkan instance version")
         };
 
-        // --- 7. Application info struct: tells Vulkan who we are and what version we want ---
         let app_info = vk::ApplicationInfo::builder()
             .application_name(b"Wolf Engine\0")
             .engine_name(b"Wolf Engine\0")
             .api_version(supported);
 
-        // --- 8. Debug utils (validation) create info: filter severity/type, set callback ---
         let mut debug_ci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -326,9 +270,8 @@ impl ApplicationHandler for App {
                     | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
                     | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
             )
-            .user_callback(Some(debug_callback));
+            .user_callback(Some(Self::debug_callback));
 
-        // --- 9. Fill instance creation struct, with extensions, layers, flags, and debug info ---
         let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_extension_names(&exts)
@@ -336,16 +279,13 @@ impl ApplicationHandler for App {
             .flags(flags)
             .push_next(&mut debug_ci);
 
-        // --- 10. Actually create the Vulkan instance ---
         let instance =
             unsafe { entry.create_instance(&create_info, None) }.expect("vkCreateInstance failed");
         info!("🎉 Vulkan instance ready");
 
-        // --- 11. Create Vulkan debug messenger to capture validation messages ---
         let debug = unsafe { instance.create_debug_utils_messenger_ext(&debug_ci, None) }
             .expect("debug utils messenger");
 
-        // --- 12. Create Vulkan presentation surface for our window (platform-specific) ---
         let window_handle = window.window_handle().unwrap();
         let display_handle = window.display_handle().unwrap();
         let surface = unsafe {
@@ -357,7 +297,6 @@ impl ApplicationHandler for App {
         }
         .expect("Failed to create Vulkan surface");
 
-        // --- 13. Pick a physical device (GPU) that supports required features and surface ---
         let devices = unsafe { instance.enumerate_physical_devices() }
             .expect("Failed to enumerate physical devices");
         let (physical_device, graphics_family, present_family) = devices
@@ -387,14 +326,13 @@ impl ApplicationHandler for App {
             })
             .expect("No suitable GPU found");
 
-        // --- 14. Check for device extensions and enable as needed (swapchain, portability) ---
         let available_exts = unsafe {
             instance
                 .enumerate_device_extension_properties(physical_device, None)
                 .expect("Failed to enumerate device extensions")
                 .iter()
                 .map(|e| {
-                    std::ffi::CStr::from_ptr(e.extension_name.as_ptr())
+                    { std::ffi::CStr::from_ptr(e.extension_name.as_ptr()) }
                         .to_string_lossy()
                         .into_owned()
                 })
@@ -410,7 +348,6 @@ impl ApplicationHandler for App {
             info!("✅ VK_KHR_portability_subset enabled");
         }
 
-        // --- 15. Create the logical device and the required queues ---
         let queue_priorities = [1.0_f32];
         let mut unique_queues = vec![graphics_family];
         if graphics_family != present_family {
@@ -430,12 +367,9 @@ impl ApplicationHandler for App {
             .enabled_extension_names(&device_exts);
         let device = unsafe { instance.create_device(physical_device, &device_create_info, None) }
             .expect("Failed to create logical device");
-        // Get the queue handles from the device
         let graphics_queue = unsafe { device.get_device_queue(graphics_family, 0) };
         let present_queue = unsafe { device.get_device_queue(present_family, 0) };
 
-        // --- 16. Move all local handles/resources into the struct for use later ---
-        self.window = Some(window);
         self.entry = Some(entry);
         self.instance = Some(instance);
         self.debug = Some(debug);
@@ -448,35 +382,24 @@ impl ApplicationHandler for App {
         self.create_swapchain();
         self.create_render_pass();
         self.create_framebuffers();
+        Ok(())
     }
 
-    /// Window event callback: handle close request (exit cleanly)
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: &WindowEvent) {
         if matches!(event, WindowEvent::CloseRequested) {
             event_loop.exit();
         }
     }
-}
 
-//---------------------------------------------------
-// Ensure debug messenger is properly destroyed (prevents validation spam on shutdown)
-impl Drop for App {
-    fn drop(&mut self) {
+    fn render(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn shutdown(&mut self) {
         if let (Some(instance), Some(debug)) = (&self.instance, &self.debug) {
             unsafe {
                 instance.destroy_debug_utils_messenger_ext(*debug, None);
             }
         }
     }
-}
-
-//---------------------------------------------------
-// Program entry point: set up logger, create event loop and App, start main loop
-fn main() -> Result<()> {
-    env_logger::init();                   // Enable logging macros (info!, error! etc.)
-    let mut app = App::default();         // Empty application state
-    let event_loop = EventLoop::new()?;   // Set up main event loop (can fail)
-    event_loop.set_control_flow(ControlFlow::Poll); // Poll for events (not Wait)
-    event_loop.run_app(&mut app)?;        // Run event loop, passing app as handler
-    Ok(())
 }
