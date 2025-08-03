@@ -46,7 +46,6 @@ impl<R: Renderer + Default> App<R> {
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
         event_loop.run_app(&mut app)?;
-        app.renderer.shutdown();
         Ok(())
     }
 }
