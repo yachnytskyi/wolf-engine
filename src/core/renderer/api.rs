@@ -1,5 +1,3 @@
-// src/renderer/api.rs
-
 use crate::error::Result;
 use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window, window::WindowId};
 

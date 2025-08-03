@@ -19,7 +19,6 @@ const KHR_PORTABILITY_SUBSET_EXTENSION_NAME: &std::ffi::CStr =
 
 #[derive(Default)]
 pub struct VulkanRenderer {
-    // Removed Option<Window>; it's not needed and not clonable
     entry: Option<Entry>,
     instance: Option<Instance>,
     debug: Option<vk::DebugUtilsMessengerEXT>,
@@ -41,6 +40,72 @@ pub struct VulkanRenderer {
 }
 
 impl VulkanRenderer {
+    /// Shared teardown; idempotent and safe to call multiple times.
+    fn cleanup(&mut self) {
+        unsafe {
+            if let Some(device) = &self.device {
+                // ensure GPU is idle before destroying resources
+                device.device_wait_idle().ok();
+
+                // destroy framebuffers
+                for fb in self.framebuffers.drain(..) {
+                    device.destroy_framebuffer(fb, None);
+                }
+
+                // destroy render pass
+                if let Some(rp) = self.render_pass {
+                    device.destroy_render_pass(rp, None);
+                }
+                self.render_pass = None;
+
+                // destroy image views
+                for iv in self.swapchain_image_views.drain(..) {
+                    device.destroy_image_view(iv, None);
+                }
+
+                // destroy swapchain
+                if let Some(swapchain) = self.swapchain {
+                    device.destroy_swapchain_khr(swapchain, None);
+                }
+                self.swapchain = None;
+            }
+
+            // destroy debug messenger
+            if let (Some(instance), Some(debug)) = (&self.instance, &self.debug) {
+                instance.destroy_debug_utils_messenger_ext(*debug, None);
+            }
+            self.debug = None;
+
+            // destroy surface
+            if let (Some(instance), Some(surface)) = (&self.instance, self.surface) {
+                instance.destroy_surface_khr(surface, None);
+            }
+            self.surface = None;
+
+            // destroy logical device
+            if let Some(device) = &self.device {
+                device.destroy_device(None);
+            }
+            self.device = None;
+
+            // destroy instance
+            if let Some(instance) = &self.instance {
+                instance.destroy_instance(None);
+            }
+            self.instance = None;
+        }
+
+        // clear other state
+        self.entry = None;
+        self.physical_device = None;
+        self.graphics_queue = None;
+        self.present_queue = None;
+        self.queue_family_indices = None;
+        self.swapchain_images.clear();
+        self.swapchain_format = None;
+        self.swapchain_extent = None;
+    }
+
     fn create_swapchain(&mut self) {
         let instance = self.instance.as_ref().unwrap();
         let device = self.device.as_ref().unwrap();
@@ -396,10 +461,13 @@ impl Renderer for VulkanRenderer {
     }
 
     fn shutdown(&mut self) {
-        if let (Some(instance), Some(debug)) = (&self.instance, &self.debug) {
-            unsafe {
-                instance.destroy_debug_utils_messenger_ext(*debug, None);
-            }
-        }
+        self.cleanup();
+    }
+}
+
+impl Drop for VulkanRenderer {
+    fn drop(&mut self) {
+        // best-effort fallback; must not panic
+        self.cleanup();
     }
 }
