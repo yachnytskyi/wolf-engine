@@ -2,7 +2,7 @@ mod app;
 mod core;
 mod error;
 
-use crate::core::renderer::vulkan::VulkanRenderer;
+use crate::core::renderer::backend::vulkan::VulkanRenderer;
 use app::App;
 
 fn main() -> error::Result<()> {
