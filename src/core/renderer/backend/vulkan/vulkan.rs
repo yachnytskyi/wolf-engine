@@ -1,6 +1,8 @@
 use crate::core::renderer::api::Renderer;
 use crate::error::Result;
 use log::{error, info, warn};
+use smallvec::SmallVec;
+use std::ffi::CStr;
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::EntryV1_1;
@@ -30,13 +32,17 @@ pub struct VulkanRenderer {
     queue_family_indices: Option<(u32, u32)>,
 
     swapchain: Option<vk::SwapchainKHR>,
-    swapchain_images: Vec<vk::Image>,
-    swapchain_image_views: Vec<vk::ImageView>,
+
+    // Usually 2–3; inline capacity 4 avoids a heap alloc on typical setups.
+    swapchain_images: SmallVec<[vk::Image; 4]>,
+    swapchain_image_views: SmallVec<[vk::ImageView; 4]>,
     swapchain_format: Option<vk::Format>,
     swapchain_extent: Option<vk::Extent2D>,
 
     render_pass: Option<vk::RenderPass>,
-    framebuffers: Vec<vk::Framebuffer>,
+
+    // Typically same count as images.
+    framebuffers: SmallVec<[vk::Framebuffer; 4]>,
 }
 
 impl VulkanRenderer {
@@ -166,27 +172,30 @@ impl VulkanRenderer {
         let swapchain = unsafe { device.create_swapchain_khr(&swapchain_info, None) }
             .expect("Failed to create swapchain");
 
-        let images = unsafe { device.get_swapchain_images_khr(swapchain).unwrap() };
-        let image_views: Vec<_> = images
-            .iter()
-            .map(|&image| {
-                let view_info = vk::ImageViewCreateInfo::builder()
-                    .image(image)
-                    .view_type(vk::ImageViewType::_2D)
-                    .format(format.format)
-                    .components(vk::ComponentMapping::default())
-                    .subresource_range(
-                        vk::ImageSubresourceRange::builder()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .base_mip_level(0)
-                            .level_count(1)
-                            .base_array_layer(0)
-                            .layer_count(1)
-                            .build(),
-                    );
-                unsafe { device.create_image_view(&view_info, None).unwrap() }
-            })
-            .collect();
+        let images_raw = unsafe { device.get_swapchain_images_khr(swapchain).unwrap() };
+
+        let mut images: SmallVec<[vk::Image; 4]> = SmallVec::with_capacity(images_raw.len());
+        images.extend_from_slice(&images_raw);
+
+        let mut image_views: SmallVec<[vk::ImageView; 4]> = SmallVec::with_capacity(images.len());
+        for &image in &images {
+            let view_info = vk::ImageViewCreateInfo::builder()
+                .image(image)
+                .view_type(vk::ImageViewType::_2D)
+                .format(format.format)
+                .components(vk::ComponentMapping::default())
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(0)
+                        .level_count(1)
+                        .base_array_layer(0)
+                        .layer_count(1)
+                        .build(),
+                );
+            let view = unsafe { device.create_image_view(&view_info, None).unwrap() };
+            image_views.push(view);
+        }
 
         self.swapchain = Some(swapchain);
         self.swapchain_images = images;
@@ -235,22 +244,24 @@ impl VulkanRenderer {
         let render_pass = self.render_pass.unwrap();
         let extent = self.swapchain_extent.unwrap();
 
-        self.framebuffers = self
-            .swapchain_image_views
-            .iter()
-            .map(|&view| {
-                let attachments = [view];
-                let framebuffer_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(render_pass)
-                    .attachments(&attachments)
-                    .width(extent.width)
-                    .height(extent.height)
-                    .layers(1);
+        let mut framebuffers: SmallVec<[vk::Framebuffer; 4]> =
+            SmallVec::with_capacity(self.swapchain_image_views.len());
 
-                unsafe { device.create_framebuffer(&framebuffer_info, None) }
-                    .expect("Failed to create framebuffer")
-            })
-            .collect();
+        for &view in &self.swapchain_image_views {
+            let attachments = [view];
+            let framebuffer_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(render_pass)
+                .attachments(&attachments)
+                .width(extent.width)
+                .height(extent.height)
+                .layers(1);
+
+            let fb = unsafe { device.create_framebuffer(&framebuffer_info, None) }
+                .expect("Failed to create framebuffer");
+            framebuffers.push(fb);
+        }
+
+        self.framebuffers = framebuffers;
 
         info!("✅ Framebuffers created!");
     }
@@ -279,31 +290,31 @@ impl Renderer for VulkanRenderer {
         let loader = unsafe { LibloadingLoader::new(LIBRARY) }?;
         let entry = unsafe { Entry::new(loader) }?;
 
-        let mut exts: Vec<*const i8> = vk_window::get_required_instance_extensions(window)
-            .iter()
-            .map(|e| e.as_ptr())
-            .collect();
+        // Instance extensions (tiny set) → SmallVec
+        let mut exts: SmallVec<[*const i8; 8]> =
+            vk_window::get_required_instance_extensions(window)
+                .iter()
+                .map(|e| e.as_ptr())
+                .collect();
         exts.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
         #[cfg(target_os = "macos")]
         exts.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
 
-        let available_layers: Vec<String> = unsafe {
+        // Probe instance layers without allocating Strings.
+        let has_validation_layer = unsafe {
             entry
                 .enumerate_instance_layer_properties()
                 .unwrap()
                 .iter()
-                .map(|p| {
-                    { std::ffi::CStr::from_ptr(p.layer_name.as_ptr()) }
-                        .to_string_lossy()
-                        .into_owned()
+                .any(|p| {
+                    CStr::from_ptr(p.layer_name.as_ptr()).to_bytes()
+                        == b"VK_LAYER_KHRONOS_validation"
                 })
-                .collect()
         };
-        let mut layer_pointers = Vec::<*const i8>::new();
-        if available_layers
-            .iter()
-            .any(|l| l == "VK_LAYER_KHRONOS_validation")
-        {
+
+        // Build enabled layer name pointers.
+        let mut layer_pointers: SmallVec<[*const i8; 4]> = SmallVec::new();
+        if has_validation_layer {
             layer_pointers.push(b"VK_LAYER_KHRONOS_validation\0".as_ptr() as *const i8);
             info!("✅ Validation layer enabled");
         }
@@ -391,42 +402,46 @@ impl Renderer for VulkanRenderer {
             })
             .expect("No suitable GPU found");
 
-        let available_exts = unsafe {
+        // Probe device extensions without allocating Strings.
+        let has_portability_subset = unsafe {
             instance
                 .enumerate_device_extension_properties(physical_device, None)
                 .expect("Failed to enumerate device extensions")
                 .iter()
-                .map(|e| {
-                    { std::ffi::CStr::from_ptr(e.extension_name.as_ptr()) }
-                        .to_string_lossy()
-                        .into_owned()
+                .any(|e| {
+                    CStr::from_ptr(e.extension_name.as_ptr())
+                        == KHR_PORTABILITY_SUBSET_EXTENSION_NAME
                 })
-                .collect::<Vec<_>>()
         };
 
-        let mut device_exts = vec![vk::KHR_SWAPCHAIN_EXTENSION.name.as_ptr()];
-        if available_exts
-            .iter()
-            .any(|e| e == KHR_PORTABILITY_SUBSET_EXTENSION_NAME.to_str().unwrap())
-        {
+        // Build device extension pointer list (tiny set) → SmallVec
+        let mut device_exts: SmallVec<[*const i8; 4]> = SmallVec::new();
+        device_exts.push(vk::KHR_SWAPCHAIN_EXTENSION.name.as_ptr());
+        if has_portability_subset {
             device_exts.push(KHR_PORTABILITY_SUBSET_EXTENSION_NAME.as_ptr());
             info!("✅ VK_KHR_portability_subset enabled");
         }
 
-        let queue_priorities = [1.0_f32];
-        let mut unique_queues = vec![graphics_family];
+        // Unique queues (max 2) → SmallVec
+        let mut unique_queues: SmallVec<[u32; 2]> = SmallVec::new();
+        unique_queues.push(graphics_family);
         if graphics_family != present_family {
             unique_queues.push(present_family);
         }
-        let queue_create_infos: Vec<_> = unique_queues
-            .iter()
-            .map(|&family| {
+
+        // Queue create infos (max 2) → SmallVec; pre-size exactly
+        let queue_priorities = [1.0_f32];
+        let mut queue_create_infos: SmallVec<[vk::DeviceQueueCreateInfo; 2]> =
+            SmallVec::with_capacity(unique_queues.len());
+        for &family in &unique_queues {
+            queue_create_infos.push(
                 vk::DeviceQueueCreateInfo::builder()
                     .queue_family_index(family)
                     .queue_priorities(&queue_priorities)
-                    .build()
-            })
-            .collect();
+                    .build(),
+            );
+        }
+
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_exts);

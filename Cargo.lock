@@ -1976,6 +1976,7 @@ dependencies = [
  "env_logger",
  "libloading",
  "log",
+ "smallvec",
  "vulkanalia",
  "winit",
 ]
