@@ -1,12 +1,19 @@
+[features]
+default = ["vulkan"]
+vulkan = ["dep:vulkanalia", "dep:libloading"]
+
+
 [package]
 name    = "wolf-engine"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-smallvec   = "^1.15.1"
-vulkanalia = { version = "*", features = ["window", "libloading"] }
+smallvec   = "*"
+vulkanalia = { version = "*", features = ["window", "libloading"], optional = true }
 winit      = "*"
 log        = "*"
 env_logger = "*"
-libloading = "*"
+libloading = { version = "*", optional = true }
+
+

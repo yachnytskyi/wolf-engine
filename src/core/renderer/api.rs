@@ -10,7 +10,4 @@ pub trait Renderer {
 
     /// Draw a frame (stub for now, you can expand later).
     fn render(&mut self) -> Result<()>;
-
-    /// Shut down and release all resources.
-    fn shutdown(&mut self);
 }

@@ -474,10 +474,6 @@ impl Renderer for VulkanRenderer {
     fn render(&mut self) -> Result<()> {
         Ok(())
     }
-
-    fn shutdown(&mut self) {
-        self.cleanup();
-    }
 }
 
 impl Drop for VulkanRenderer {
