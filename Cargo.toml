@@ -1,28 +1,30 @@
-[profile.release]       # normal release
+[profile.release]                 # normal release
 opt-level = 3
 debug-assertions = false
 overflow-checks = false
 
-[profile.realease-with-debug]  # release + debug
+[profile.release-with-debug]      # release + line tables + assertions
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
-debug = 1     # keep some debug symbols (optional, set to 2 for full)
+debug = 1                         # line info (set to 2 for full symbols)
 
-[profile.realease-with-full-debug]  # release + full debug
+[profile.release-with-full-debug] # release + full debug info + assertions
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
-debug = 2     
+debug = 2
 
 [alias]
 release-with-debug = "run --profile release-with-debug"
-release-with-full-debug = "run --profile release-with-debug"
+release-with-full-debug = "run --profile release-with-full-debug"
+# (optional) build-only aliases:
+# release-with-debug-build = "build --profile release-with-debug"
+# release-with-full-debug-build = "build --profile release-with-full-debug"
 
 [features]
 default = ["vulkan"]
 vulkan = ["dep:vulkanalia", "dep:libloading"]
-
 
 [package]
 name    = "wolf-engine"
@@ -36,5 +38,3 @@ winit      = "*"
 log        = "*"
 env_logger = "*"
 libloading = { version = "*", optional = true }
-
-
