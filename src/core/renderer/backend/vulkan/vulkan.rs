@@ -1,13 +1,19 @@
+#[cfg(debug_assertions)]
+use vulkanalia::vk::ExtDebugUtilsExtension;
+
 use crate::core::renderer::api::Renderer;
 use crate::error::Result;
 use log::{error, info, warn};
 use smallvec::SmallVec;
 use std::ffi::CStr;
+
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::prelude::v1_0::*;
 use vulkanalia::vk::EntryV1_1;
+
 use vulkanalia::vk::KhrSurfaceExtension;
-use vulkanalia::vk::{self, ExtDebugUtilsExtension, KhrSwapchainExtension};
+use vulkanalia::vk::{self, KhrSwapchainExtension};
+
 use vulkanalia::window as vk_window;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::{
@@ -302,7 +308,13 @@ impl Renderer for VulkanRenderer {
                 .iter()
                 .map(|e| e.as_ptr())
                 .collect();
-        exts.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
+
+        // Only ask for EXT_debug_utils in debug builds
+        #[cfg(debug_assertions)]
+        {
+            exts.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
+        }
+
         #[cfg(target_os = "macos")]
         exts.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
 
@@ -318,8 +330,9 @@ impl Renderer for VulkanRenderer {
                 })
         };
 
-        // Build enabled layer name pointers.
+        // Build enabled layer name pointers (debug only).
         let mut layer_pointers: SmallVec<[*const i8; 4]> = SmallVec::new();
+        #[cfg(debug_assertions)]
         if has_validation_layer {
             layer_pointers.push(b"VK_LAYER_KHRONOS_validation\0".as_ptr() as *const i8);
             info!("✅ Validation layer enabled");
@@ -342,6 +355,15 @@ impl Renderer for VulkanRenderer {
             .engine_name(b"Wolf Engine\0")
             .api_version(supported);
 
+        // Base instance create info
+        let mut create_info = vk::InstanceCreateInfo::builder()
+            .application_info(&app_info)
+            .enabled_extension_names(&exts)
+            .enabled_layer_names(&layer_pointers)
+            .flags(flags);
+
+        // In debug builds, chain a DebugUtilsMessengerCreateInfo to catch early messages.
+        #[cfg(debug_assertions)]
         let mut debug_ci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
                 vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
@@ -354,20 +376,26 @@ impl Renderer for VulkanRenderer {
             )
             .user_callback(Some(Self::debug_callback));
 
-        let create_info = vk::InstanceCreateInfo::builder()
-            .application_info(&app_info)
-            .enabled_extension_names(&exts)
-            .enabled_layer_names(&layer_pointers)
-            .flags(flags)
-            .push_next(&mut debug_ci);
+        #[cfg(debug_assertions)]
+        {
+            create_info = create_info.push_next(&mut debug_ci);
+        }
 
         let instance =
             unsafe { entry.create_instance(&create_info, None) }.expect("vkCreateInstance failed");
         info!("🎉 Vulkan instance ready");
 
-        let debug = unsafe { instance.create_debug_utils_messenger_ext(&debug_ci, None) }
-            .expect("debug utils messenger");
+        // Create debug messenger only in debug builds.
+        #[cfg(debug_assertions)]
+        let debug = Some(
+            unsafe { instance.create_debug_utils_messenger_ext(&debug_ci, None) }
+                .expect("debug utils messenger"),
+        );
 
+        #[cfg(not(debug_assertions))]
+        let debug = None;
+
+        // Surface
         let window_handle = window.window_handle().unwrap();
         let display_handle = window.display_handle().unwrap();
         let surface = unsafe {
@@ -379,9 +407,9 @@ impl Renderer for VulkanRenderer {
         }
         .expect("Failed to create Vulkan surface");
 
+        // Pick device + queues
         let devices = unsafe { instance.enumerate_physical_devices() }
             .expect("Failed to enumerate physical devices");
-
         let (physical_device, graphics_family, present_family) = devices
             .iter()
             .find_map(|&dev| {
@@ -392,7 +420,6 @@ impl Renderer for VulkanRenderer {
                     if info.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
                         graphics_index = Some(i as u32);
                     }
-
                     let present_support = unsafe {
                         instance
                             .get_physical_device_surface_support_khr(dev, i as u32, surface)
@@ -410,7 +437,7 @@ impl Renderer for VulkanRenderer {
             })
             .expect("No suitable GPU found");
 
-        // Probe device extensions without allocating Strings.
+        // Device extensions
         let has_portability_subset = unsafe {
             instance
                 .enumerate_device_extension_properties(physical_device, None)
@@ -422,7 +449,6 @@ impl Renderer for VulkanRenderer {
                 })
         };
 
-        // Build device extension pointer list (tiny set) → SmallVec
         let mut device_exts: SmallVec<[*const i8; 4]> = SmallVec::new();
         device_exts.push(vk::KHR_SWAPCHAIN_EXTENSION.name.as_ptr());
         if has_portability_subset {
@@ -430,14 +456,13 @@ impl Renderer for VulkanRenderer {
             info!("✅ VK_KHR_portability_subset enabled");
         }
 
-        // Unique queues (max 2) → SmallVec
+        // Queues
         let mut unique_queues: SmallVec<[u32; 2]> = SmallVec::new();
         unique_queues.push(graphics_family);
         if graphics_family != present_family {
             unique_queues.push(present_family);
         }
 
-        // Queue create infos (max 2) → SmallVec; pre-size exactly
         let queue_priorities = [1.0_f32];
         let mut queue_create_infos: SmallVec<[vk::DeviceQueueCreateInfo; 2]> =
             SmallVec::with_capacity(unique_queues.len());
@@ -461,15 +486,17 @@ impl Renderer for VulkanRenderer {
         let graphics_queue = unsafe { device.get_device_queue(graphics_family, 0) };
         let present_queue = unsafe { device.get_device_queue(present_family, 0) };
 
+        // Save state + continue with your existing pipeline setup
         self.entry = Some(entry);
         self.instance = Some(instance);
-        self.debug = Some(debug);
+        self.debug = debug; // <- None in Release, Some(...) in Debug
         self.surface = Some(surface);
         self.physical_device = Some(physical_device);
         self.queue_family_indices = Some((graphics_family, present_family));
         self.device = Some(device);
         self.graphics_queue = Some(graphics_queue);
         self.present_queue = Some(present_queue);
+
         self.create_swapchain();
         self.create_render_pass();
         self.create_framebuffers();
