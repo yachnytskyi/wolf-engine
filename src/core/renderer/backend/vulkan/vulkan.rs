@@ -123,11 +123,13 @@ impl VulkanRenderer {
                 .get_physical_device_surface_capabilities_khr(physical_device, surface)
                 .unwrap()
         };
+
         let surface_formats = unsafe {
             instance
                 .get_physical_device_surface_formats_khr(physical_device, surface)
                 .unwrap()
         };
+
         let format = surface_formats
             .iter()
             .find(|f| f.format == vk::Format::B8G8R8A8_SRGB)
@@ -139,16 +141,19 @@ impl VulkanRenderer {
             },
             _ => surface_caps.current_extent,
         };
+
         let present_modes = unsafe {
             instance
                 .get_physical_device_surface_present_modes_khr(physical_device, surface)
                 .unwrap()
         };
+
         let present_mode = if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             vk::PresentModeKHR::MAILBOX
         } else {
             vk::PresentModeKHR::FIFO
         };
+
         let _queue_family_indices = self.queue_family_indices.unwrap();
         let mut image_count = surface_caps.min_image_count + 1;
         if surface_caps.max_image_count > 0 && image_count > surface_caps.max_image_count {
@@ -193,6 +198,7 @@ impl VulkanRenderer {
                         .layer_count(1)
                         .build(),
                 );
+
             let view = unsafe { device.create_image_view(&view_info, None).unwrap() };
             image_views.push(view);
         }
@@ -375,6 +381,7 @@ impl Renderer for VulkanRenderer {
 
         let devices = unsafe { instance.enumerate_physical_devices() }
             .expect("Failed to enumerate physical devices");
+
         let (physical_device, graphics_family, present_family) = devices
             .iter()
             .find_map(|&dev| {
@@ -385,6 +392,7 @@ impl Renderer for VulkanRenderer {
                     if info.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
                         graphics_index = Some(i as u32);
                     }
+
                     let present_support = unsafe {
                         instance
                             .get_physical_device_surface_support_khr(dev, i as u32, surface)
@@ -433,6 +441,7 @@ impl Renderer for VulkanRenderer {
         let queue_priorities = [1.0_f32];
         let mut queue_create_infos: SmallVec<[vk::DeviceQueueCreateInfo; 2]> =
             SmallVec::with_capacity(unique_queues.len());
+
         for &family in &unique_queues {
             queue_create_infos.push(
                 vk::DeviceQueueCreateInfo::builder()
@@ -445,8 +454,10 @@ impl Renderer for VulkanRenderer {
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_exts);
+
         let device = unsafe { instance.create_device(physical_device, &device_create_info, None) }
             .expect("Failed to create logical device");
+
         let graphics_queue = unsafe { device.get_device_queue(graphics_family, 0) };
         let present_queue = unsafe { device.get_device_queue(present_family, 0) };
 
