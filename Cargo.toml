@@ -1,3 +1,24 @@
+[profile.release]       # normal release
+opt-level = 3
+debug-assertions = false
+overflow-checks = false
+
+[profile.realease-with-debug]  # release + debug
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+debug = 1     # keep some debug symbols (optional, set to 2 for full)
+
+[profile.realease-with-full-debug]  # release + full debug
+inherits = "release"
+debug-assertions = true
+overflow-checks = true
+debug = 2     
+
+[alias]
+release-with-debug = "run --profile release-with-debug"
+release-with-full-debug = "run --profile release-with-debug"
+
 [features]
 default = ["vulkan"]
 vulkan = ["dep:vulkanalia", "dep:libloading"]
