@@ -1,3 +1,4 @@
+// Import Vulkan debug utils extension only in debug builds
 #[cfg(debug_assertions)]
 use vulkanalia::vk::ExtDebugUtilsExtension;
 
@@ -22,92 +23,96 @@ use winit::{
     window::{Window, WindowId},
 };
 
+// Portability extension needed on some platforms (e.g., macOS + MoltenVK)
 const KHR_PORTABILITY_SUBSET_EXTENSION_NAME: &std::ffi::CStr =
     unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(b"VK_KHR_portability_subset\0") };
 
+/// Main Vulkan renderer struct.
+/// Holds all Vulkan objects and resources needed to draw.
 #[derive(Default)]
 pub struct VulkanRenderer {
-    entry: Option<Entry>,
-    instance: Option<Instance>,
-    debug: Option<vk::DebugUtilsMessengerEXT>,
-    surface: Option<vk::SurfaceKHR>,
-    physical_device: Option<vk::PhysicalDevice>,
-    device: Option<Device>,
-    graphics_queue: Option<vk::Queue>,
-    present_queue: Option<vk::Queue>,
-    queue_family_indices: Option<(u32, u32)>,
+    entry: Option<Entry>,                      // Vulkan entry point (library handle)
+    instance: Option<Instance>,                // Vulkan instance
+    debug: Option<vk::DebugUtilsMessengerEXT>, // Debug messenger (only in debug builds)
+    surface: Option<vk::SurfaceKHR>,           // Window surface
+    physical_device: Option<vk::PhysicalDevice>, // Chosen physical GPU
+    device: Option<Device>,                    // Logical device
+    graphics_queue: Option<vk::Queue>,         // Graphics queue
+    present_queue: Option<vk::Queue>,          // Presentation queue
+    queue_family_indices: Option<(u32, u32)>,  // Queue family indices
 
-    swapchain: Option<vk::SwapchainKHR>,
+    swapchain: Option<vk::SwapchainKHR>, // Swapchain for presenting images
 
-    // Usually 2–3; inline capacity 4 avoids a heap alloc on typical setups.
+    // Usually 2–3 images; SmallVec avoids heap allocation for small counts
     swapchain_images: SmallVec<[vk::Image; 4]>,
     swapchain_image_views: SmallVec<[vk::ImageView; 4]>,
-    swapchain_format: Option<vk::Format>,
-    swapchain_extent: Option<vk::Extent2D>,
+    swapchain_format: Option<vk::Format>,   // Image format
+    swapchain_extent: Option<vk::Extent2D>, // Image resolution
 
-    render_pass: Option<vk::RenderPass>,
+    render_pass: Option<vk::RenderPass>, // Render pass object
 
-    // Typically same count as images.
+    // One framebuffer per swapchain image
     framebuffers: SmallVec<[vk::Framebuffer; 4]>,
 }
 
 impl VulkanRenderer {
-    /// Shared teardown; idempotent and safe to call multiple times.
+    /// Cleans up all Vulkan resources.
+    /// Safe to call multiple times, called automatically in Drop.
     fn cleanup(&mut self) {
         unsafe {
             if let Some(device) = &self.device {
-                // ensure GPU is idle before destroying resources
+                // Wait until GPU is idle before tearing down
                 device.device_wait_idle().ok();
 
-                // destroy framebuffers
+                // Destroy framebuffers
                 for fb in self.framebuffers.drain(..) {
                     device.destroy_framebuffer(fb, None);
                 }
 
-                // destroy render pass
+                // Destroy render pass
                 if let Some(rp) = self.render_pass {
                     device.destroy_render_pass(rp, None);
                 }
                 self.render_pass = None;
 
-                // destroy image views
+                // Destroy swapchain image views
                 for iv in self.swapchain_image_views.drain(..) {
                     device.destroy_image_view(iv, None);
                 }
 
-                // destroy swapchain
+                // Destroy swapchain
                 if let Some(swapchain) = self.swapchain {
                     device.destroy_swapchain_khr(swapchain, None);
                 }
                 self.swapchain = None;
             }
 
-            // destroy debug messenger
+            // Destroy debug messenger (only created in debug builds)
             if let (Some(instance), Some(debug)) = (&self.instance, &self.debug) {
                 instance.destroy_debug_utils_messenger_ext(*debug, None);
             }
             self.debug = None;
 
-            // destroy surface
+            // Destroy surface
             if let (Some(instance), Some(surface)) = (&self.instance, self.surface) {
                 instance.destroy_surface_khr(surface, None);
             }
             self.surface = None;
 
-            // destroy logical device
+            // Destroy logical device
             if let Some(device) = &self.device {
                 device.destroy_device(None);
             }
             self.device = None;
 
-            // destroy instance
+            // Destroy Vulkan instance
             if let Some(instance) = &self.instance {
                 instance.destroy_instance(None);
             }
             self.instance = None;
         }
 
-        // clear other state
+        // Clear CPU-side state
         self.entry = None;
         self.physical_device = None;
         self.graphics_queue = None;
@@ -118,28 +123,34 @@ impl VulkanRenderer {
         self.swapchain_extent = None;
     }
 
+    /// Creates the swapchain and image views.
     fn create_swapchain(&mut self) {
         let instance = self.instance.as_ref().unwrap();
         let device = self.device.as_ref().unwrap();
         let surface = self.surface.unwrap();
         let physical_device = self.physical_device.unwrap();
 
+        // Query surface capabilities
         let surface_caps = unsafe {
             instance
                 .get_physical_device_surface_capabilities_khr(physical_device, surface)
                 .unwrap()
         };
 
+        // Query supported formats
         let surface_formats = unsafe {
             instance
                 .get_physical_device_surface_formats_khr(physical_device, surface)
                 .unwrap()
         };
 
+        // Prefer SRGB, fallback to first format
         let format = surface_formats
             .iter()
             .find(|f| f.format == vk::Format::B8G8R8A8_SRGB)
             .unwrap_or(&surface_formats[0]);
+
+        // Pick swapchain resolution (use current_extent if fixed)
         let extent = match surface_caps.current_extent.width {
             std::u32::MAX => vk::Extent2D {
                 width: 800,
@@ -148,12 +159,14 @@ impl VulkanRenderer {
             _ => surface_caps.current_extent,
         };
 
+        // Query present modes
         let present_modes = unsafe {
             instance
                 .get_physical_device_surface_present_modes_khr(physical_device, surface)
                 .unwrap()
         };
 
+        // Prefer MAILBOX (triple buffering), else fallback to FIFO (vsync)
         let present_mode = if present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
             vk::PresentModeKHR::MAILBOX
         } else {
@@ -161,11 +174,14 @@ impl VulkanRenderer {
         };
 
         let _queue_family_indices = self.queue_family_indices.unwrap();
+
+        // Request one more image than minimum if possible
         let mut image_count = surface_caps.min_image_count + 1;
         if surface_caps.max_image_count > 0 && image_count > surface_caps.max_image_count {
             image_count = surface_caps.max_image_count;
         }
 
+        // Swapchain creation info
         let swapchain_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(surface)
             .min_image_count(image_count)
@@ -180,14 +196,18 @@ impl VulkanRenderer {
             .present_mode(present_mode)
             .clipped(true);
 
+        // Create swapchain
         let swapchain = unsafe { device.create_swapchain_khr(&swapchain_info, None) }
             .expect("Failed to create swapchain");
 
+        // Retrieve swapchain images
         let images_raw = unsafe { device.get_swapchain_images_khr(swapchain).unwrap() };
 
+        // Store images
         let mut images: SmallVec<[vk::Image; 4]> = SmallVec::with_capacity(images_raw.len());
         images.extend_from_slice(&images_raw);
 
+        // Create image views for each swapchain image
         let mut image_views: SmallVec<[vk::ImageView; 4]> = SmallVec::with_capacity(images.len());
         for &image in &images {
             let view_info = vk::ImageViewCreateInfo::builder()
@@ -209,6 +229,7 @@ impl VulkanRenderer {
             image_views.push(view);
         }
 
+        // Save swapchain state
         self.swapchain = Some(swapchain);
         self.swapchain_images = images;
         self.swapchain_image_views = image_views;
@@ -218,10 +239,12 @@ impl VulkanRenderer {
         info!("✅ Swapchain and image views created!");
     }
 
+    /// Creates a render pass for rendering into the swapchain images.
     fn create_render_pass(&mut self) {
         let device = self.device.as_ref().unwrap();
         let format = self.swapchain_format.unwrap();
 
+        // Single color attachment (the swapchain image)
         let color_attachment = vk::AttachmentDescription::builder()
             .format(format)
             .samples(vk::SampleCountFlags::_1)
@@ -232,18 +255,22 @@ impl VulkanRenderer {
             .initial_layout(vk::ImageLayout::UNDEFINED)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
 
+        // Reference to attachment in subpass
         let color_attachment_ref = vk::AttachmentReference::builder()
             .attachment(0)
             .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
 
+        // Subpass that writes to the color attachment
         let subpass = vk::SubpassDescription::builder()
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
             .color_attachments(std::slice::from_ref(&color_attachment_ref));
 
+        // Render pass creation info
         let render_pass_info = vk::RenderPassCreateInfo::builder()
             .attachments(std::slice::from_ref(&color_attachment))
             .subpasses(std::slice::from_ref(&subpass));
 
+        // Create render pass
         let render_pass = unsafe { device.create_render_pass(&render_pass_info, None) }
             .expect("Failed to create render pass");
 
@@ -251,6 +278,7 @@ impl VulkanRenderer {
         info!("✅ Render pass created!");
     }
 
+    /// Creates one framebuffer per swapchain image.
     fn create_framebuffers(&mut self) {
         let device = self.device.as_ref().unwrap();
         let render_pass = self.render_pass.unwrap();
@@ -278,14 +306,17 @@ impl VulkanRenderer {
         info!("✅ Framebuffers created!");
     }
 
-    // Debug callback (wrap all unsafe ops in explicit unsafe blocks)
+    /// Debug callback (called by Vulkan validation layers).
     unsafe extern "system" fn debug_callback(
         sev: vk::DebugUtilsMessageSeverityFlagsEXT,
         ty: vk::DebugUtilsMessageTypeFlagsEXT,
         data: *const vk::DebugUtilsMessengerCallbackDataEXT,
         _ud: *mut std::ffi::c_void,
     ) -> vk::Bool32 {
+        // Convert C string to Rust string
         let message = unsafe { std::ffi::CStr::from_ptr((*data).message).to_string_lossy() };
+
+        // Log with appropriate severity
         if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
             error!("[{ty:?}] {message}");
         } else if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
@@ -298,27 +329,30 @@ impl VulkanRenderer {
 }
 
 impl Renderer for VulkanRenderer {
+    /// Initialize Vulkan: create instance, device, swapchain, render pass, etc.
     fn initialize(&mut self, window: &Window, _event_loop: &ActiveEventLoop) -> Result<()> {
+        // Load Vulkan library
         let loader = unsafe { LibloadingLoader::new(LIBRARY) }?;
         let entry = unsafe { Entry::new(loader) }?;
 
-        // Instance extensions (tiny set) → SmallVec
+        // Query required instance extensions from winit
         let mut exts: SmallVec<[*const i8; 8]> =
             vk_window::get_required_instance_extensions(window)
                 .iter()
                 .map(|e| e.as_ptr())
                 .collect();
 
-        // Only ask for EXT_debug_utils in debug builds
+        // Add debug utils extension in debug builds
         #[cfg(debug_assertions)]
         {
             exts.push(vk::EXT_DEBUG_UTILS_EXTENSION.name.as_ptr());
         }
 
+        // On macOS, require portability extension
         #[cfg(target_os = "macos")]
         exts.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
 
-        // Probe instance layers without allocating Strings.
+        // Check for validation layer availability
         let has_validation_layer = unsafe {
             entry
                 .enumerate_instance_layer_properties()
@@ -330,7 +364,7 @@ impl Renderer for VulkanRenderer {
                 })
         };
 
-        // Build enabled layer name pointers (debug only).
+        // Enable validation layer (debug builds only)
         let mut layer_pointers: SmallVec<[*const i8; 4]> = SmallVec::new();
         #[cfg(debug_assertions)]
         if has_validation_layer {
@@ -338,31 +372,34 @@ impl Renderer for VulkanRenderer {
             info!("✅ Validation layer enabled");
         }
 
+        // macOS portability flag
         let mut flags = vk::InstanceCreateFlags::empty();
         #[cfg(target_os = "macos")]
         {
             flags |= vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
         }
 
+        // Query supported Vulkan version
         let supported = unsafe {
             entry
                 .enumerate_instance_version()
                 .expect("Failed to query Vulkan instance version")
         };
 
+        // Application info
         let app_info = vk::ApplicationInfo::builder()
             .application_name(b"Wolf Engine\0")
             .engine_name(b"Wolf Engine\0")
             .api_version(supported);
 
-        // Base instance create info
+        // Instance creation info
         let mut create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_extension_names(&exts)
             .enabled_layer_names(&layer_pointers)
             .flags(flags);
 
-        // In debug builds, chain a DebugUtilsMessengerCreateInfo to catch early messages.
+        // Debug messenger setup (debug builds only)
         #[cfg(debug_assertions)]
         let mut debug_ci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
             .message_severity(
@@ -381,11 +418,12 @@ impl Renderer for VulkanRenderer {
             create_info = create_info.push_next(&mut debug_ci);
         }
 
+        // Create Vulkan instance
         let instance =
             unsafe { entry.create_instance(&create_info, None) }.expect("vkCreateInstance failed");
         info!("🎉 Vulkan instance ready");
 
-        // Create debug messenger only in debug builds.
+        // Create debug messenger in debug builds
         #[cfg(debug_assertions)]
         let debug = Some(
             unsafe { instance.create_debug_utils_messenger_ext(&debug_ci, None) }
@@ -395,7 +433,7 @@ impl Renderer for VulkanRenderer {
         #[cfg(not(debug_assertions))]
         let debug = None;
 
-        // Surface
+        // Create window surface
         let window_handle = window.window_handle().unwrap();
         let display_handle = window.display_handle().unwrap();
         let surface = unsafe {
@@ -407,7 +445,7 @@ impl Renderer for VulkanRenderer {
         }
         .expect("Failed to create Vulkan surface");
 
-        // Pick device + queues
+        // Pick physical device + queue families
         let devices = unsafe { instance.enumerate_physical_devices() }
             .expect("Failed to enumerate physical devices");
         let (physical_device, graphics_family, present_family) = devices
@@ -437,7 +475,7 @@ impl Renderer for VulkanRenderer {
             })
             .expect("No suitable GPU found");
 
-        // Device extensions
+        // Enable device extensions (always need swapchain, maybe portability)
         let has_portability_subset = unsafe {
             instance
                 .enumerate_device_extension_properties(physical_device, None)
@@ -456,7 +494,7 @@ impl Renderer for VulkanRenderer {
             info!("✅ VK_KHR_portability_subset enabled");
         }
 
-        // Queues
+        // Setup queue creation (graphics + present)
         let mut unique_queues: SmallVec<[u32; 2]> = SmallVec::new();
         unique_queues.push(graphics_family);
         if graphics_family != present_family {
@@ -476,6 +514,7 @@ impl Renderer for VulkanRenderer {
             );
         }
 
+        // Create logical device
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_create_infos)
             .enabled_extension_names(&device_exts);
@@ -483,13 +522,14 @@ impl Renderer for VulkanRenderer {
         let device = unsafe { instance.create_device(physical_device, &device_create_info, None) }
             .expect("Failed to create logical device");
 
+        // Retrieve queues
         let graphics_queue = unsafe { device.get_device_queue(graphics_family, 0) };
         let present_queue = unsafe { device.get_device_queue(present_family, 0) };
 
-        // Save state + continue with your existing pipeline setup
+        // Save state
         self.entry = Some(entry);
         self.instance = Some(instance);
-        self.debug = debug; // <- None in Release, Some(...) in Debug
+        self.debug = debug; // Debug messenger in debug builds
         self.surface = Some(surface);
         self.physical_device = Some(physical_device);
         self.queue_family_indices = Some((graphics_family, present_family));
@@ -497,18 +537,21 @@ impl Renderer for VulkanRenderer {
         self.graphics_queue = Some(graphics_queue);
         self.present_queue = Some(present_queue);
 
+        // Continue with swapchain/rendering setup
         self.create_swapchain();
         self.create_render_pass();
         self.create_framebuffers();
         Ok(())
     }
 
+    /// Handle window events (currently just close)
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: &WindowEvent) {
         if matches!(event, WindowEvent::CloseRequested) {
             event_loop.exit();
         }
     }
 
+    /// Render one frame (currently empty placeholder)
     fn render(&mut self) -> Result<()> {
         Ok(())
     }
@@ -516,7 +559,8 @@ impl Renderer for VulkanRenderer {
 
 impl Drop for VulkanRenderer {
     fn drop(&mut self) {
-        // best-effort fallback; must not panic
+        // Ensure cleanup happens when renderer goes out of scope.
+        // Must not panic.
         self.cleanup();
     }
 }
