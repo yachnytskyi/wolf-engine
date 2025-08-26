@@ -2,9 +2,13 @@
 #[cfg(debug_assertions)]
 use vulkanalia::vk::ExtDebugUtilsExtension;
 
+// Only pull in error/warn when debug assertions are on
+#[cfg(debug_assertions)]
+use log::{error, warn};
+
 use crate::core::renderer::api::Renderer;
 use crate::error::Result;
-use log::{error, info, warn};
+use log::info;
 use smallvec::SmallVec;
 use std::ffi::CStr;
 
@@ -88,6 +92,7 @@ impl VulkanRenderer {
             }
 
             // Destroy debug messenger (only created in debug builds)
+            #[cfg(debug_assertions)]
             if let (Some(instance), Some(debug)) = (&self.instance, &self.debug) {
                 instance.destroy_debug_utils_messenger_ext(*debug, None);
             }
@@ -307,6 +312,7 @@ impl VulkanRenderer {
     }
 
     /// Debug callback (called by Vulkan validation layers).
+    #[cfg(debug_assertions)]
     unsafe extern "system" fn debug_callback(
         sev: vk::DebugUtilsMessageSeverityFlagsEXT,
         ty: vk::DebugUtilsMessageTypeFlagsEXT,
@@ -352,7 +358,8 @@ impl Renderer for VulkanRenderer {
         #[cfg(target_os = "macos")]
         exts.push(vk::KHR_PORTABILITY_ENUMERATION_EXTENSION.name.as_ptr());
 
-        // Check for validation layer availability
+        // Check for validation layer availability (debug builds only)
+        #[cfg(debug_assertions)]
         let has_validation_layer = unsafe {
             entry
                 .enumerate_instance_layer_properties()
@@ -365,7 +372,12 @@ impl Renderer for VulkanRenderer {
         };
 
         // Enable validation layer (debug builds only)
+        #[cfg(debug_assertions)]
         let mut layer_pointers: SmallVec<[*const i8; 4]> = SmallVec::new();
+
+        #[cfg(not(debug_assertions))]
+        let layer_pointers: SmallVec<[*const i8; 4]> = SmallVec::new();
+
         #[cfg(debug_assertions)]
         if has_validation_layer {
             layer_pointers.push(b"VK_LAYER_KHRONOS_validation\0".as_ptr() as *const i8);
@@ -393,7 +405,15 @@ impl Renderer for VulkanRenderer {
             .api_version(supported);
 
         // Instance creation info
+        #[cfg(debug_assertions)]
         let mut create_info = vk::InstanceCreateInfo::builder()
+            .application_info(&app_info)
+            .enabled_extension_names(&exts)
+            .enabled_layer_names(&layer_pointers)
+            .flags(flags);
+
+        #[cfg(not(debug_assertions))]
+        let create_info = vk::InstanceCreateInfo::builder()
             .application_info(&app_info)
             .enabled_extension_names(&exts)
             .enabled_layer_names(&layer_pointers)
