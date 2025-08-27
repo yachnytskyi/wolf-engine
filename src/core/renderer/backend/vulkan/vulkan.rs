@@ -94,7 +94,7 @@ impl VulkanRenderer {
             // Destroy debug messenger (only created in debug builds)
             #[cfg(debug_assertions)]
             if let (Some(instance), Some(debug)) = (&self.instance, &self.debug) {
-                instance.destroy_debug_utils_messenger_ext(*debug, None);
+                destroy_debug_messenger(instance, debug);
             }
             self.debug = None;
 
@@ -310,28 +310,6 @@ impl VulkanRenderer {
 
         info!("✅ Framebuffers created!");
     }
-
-    /// Debug callback (called by Vulkan validation layers).
-    #[cfg(debug_assertions)]
-    unsafe extern "system" fn debug_callback(
-        sev: vk::DebugUtilsMessageSeverityFlagsEXT,
-        ty: vk::DebugUtilsMessageTypeFlagsEXT,
-        data: *const vk::DebugUtilsMessengerCallbackDataEXT,
-        _ud: *mut std::ffi::c_void,
-    ) -> vk::Bool32 {
-        // Convert C string to Rust string
-        let message = unsafe { std::ffi::CStr::from_ptr((*data).message).to_string_lossy() };
-
-        // Log with appropriate severity
-        if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
-            error!("[{ty:?}] {message}");
-        } else if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
-            warn!("[{ty:?}] {message}");
-        } else {
-            info!("[{ty:?}] {message}");
-        }
-        vk::FALSE
-    }
 }
 
 impl Renderer for VulkanRenderer {
@@ -419,20 +397,9 @@ impl Renderer for VulkanRenderer {
             .enabled_layer_names(&layer_pointers)
             .flags(flags);
 
-        // Debug messenger setup (debug builds only)
+        // --- Debug messenger setup now lives in helper fns ---
         #[cfg(debug_assertions)]
-        let mut debug_ci = vk::DebugUtilsMessengerCreateInfoEXT::builder()
-            .message_severity(
-                vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
-            )
-            .message_type(
-                vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-            )
-            .user_callback(Some(Self::debug_callback));
-
+        let mut debug_ci = build_debug_messenger_ci();
         #[cfg(debug_assertions)]
         {
             create_info = create_info.push_next(&mut debug_ci);
@@ -443,12 +410,9 @@ impl Renderer for VulkanRenderer {
             unsafe { entry.create_instance(&create_info, None) }.expect("vkCreateInstance failed");
         info!("🎉 Vulkan instance ready");
 
-        // Create debug messenger in debug builds
+        // Create debug messenger in debug builds (using helper)
         #[cfg(debug_assertions)]
-        let debug = Some(
-            unsafe { instance.create_debug_utils_messenger_ext(&debug_ci, None) }
-                .expect("debug utils messenger"),
-        );
+        let debug = Some(create_debug_messenger(&instance, &debug_ci));
 
         #[cfg(not(debug_assertions))]
         let debug = None;
@@ -583,4 +547,58 @@ impl Drop for VulkanRenderer {
         // Must not panic.
         self.cleanup();
     }
+}
+
+//
+// ===== Debug Utils helpers (only compiled in debug builds) =====
+//
+
+#[cfg(debug_assertions)]
+unsafe extern "system" fn debug_callback(
+    sev: vk::DebugUtilsMessageSeverityFlagsEXT,
+    ty: vk::DebugUtilsMessageTypeFlagsEXT,
+    data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _ud: *mut std::ffi::c_void,
+) -> vk::Bool32 {
+    // Convert C string to Rust string
+    let message = unsafe { std::ffi::CStr::from_ptr((*data).message).to_string_lossy() };
+
+    // Log with appropriate severity
+    if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+        error!("[{ty:?}] {message}");
+    } else if sev.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+        warn!("[{ty:?}] {message}");
+    } else {
+        info!("[{ty:?}] {message}");
+    }
+    vk::FALSE
+}
+
+#[cfg(debug_assertions)]
+fn build_debug_messenger_ci() -> vk::DebugUtilsMessengerCreateInfoEXTBuilder<'static> {
+    vk::DebugUtilsMessengerCreateInfoEXT::builder()
+        .message_severity(
+            vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+                | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+        )
+        .message_type(
+            vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
+                | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
+                | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
+        )
+        .user_callback(Some(debug_callback))
+}
+
+#[cfg(debug_assertions)]
+fn create_debug_messenger(
+    instance: &Instance,
+    ci: &vk::DebugUtilsMessengerCreateInfoEXT,
+) -> vk::DebugUtilsMessengerEXT {
+    unsafe { instance.create_debug_utils_messenger_ext(ci, None) }
+        .expect("debug utils messenger")
+}
+
+#[cfg(debug_assertions)]
+fn destroy_debug_messenger(instance: &Instance, messenger: &vk::DebugUtilsMessengerEXT) {
+    unsafe { instance.destroy_debug_utils_messenger_ext(*messenger, None) };
 }
