@@ -1,7 +1,7 @@
 [package]
 name    = "common"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
 
 [features]
 # Keep base crate dependency-free; enable converters only when needed.
@@ -11,6 +11,6 @@ vulkan     = ["dep:vulkanalia"]
 
 [dependencies]
 # Optional deps, pulled only if a crate enables the feature.
-winit       = { version = "*",    optional = true }
-libloading  = { version = "*",    optional = true }
-vulkanalia  = { version = "*",    optional = true }
+winit      = { workspace = true, optional = true }
+libloading = { workspace = true, optional = true }
+vulkanalia = { workspace = true, optional = true }
