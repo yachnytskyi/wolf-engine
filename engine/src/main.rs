@@ -1,13 +1,11 @@
-// src/main.rs
 mod app;
 mod core;
-mod error;
 
-use crate::core::renderer::backend::SelectedRenderer;
 use app::App;
+use common::model::error::Result;
+use core::SelectedRenderer;
 
-fn main() -> error::Result<()> {
+fn main() -> Result<()> {
     env_logger::init();
-
     App::<SelectedRenderer>::run()
 }

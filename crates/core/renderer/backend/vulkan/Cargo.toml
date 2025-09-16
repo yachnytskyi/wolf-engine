@@ -1,10 +1,12 @@
 [package]
-name    = "wolf-backend-vulkan"
+name    = "backend-vulkan"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-wolf-renderer-api = { path = "../../api" }
+common       = { path = "../../../../../common", features = ["vulkan", "libloading", "winit"] }
+renderer-api = { path = "../../api" }
+
 smallvec          = "*"
 log               = "*"
 winit             = "*"

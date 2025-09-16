@@ -1,9 +1,10 @@
 [workspace]
+resolver = "3"
 members = [
   "engine",
+  "common",
   "crates/core/renderer/api",
   "crates/core/renderer/backend/vulkan",
-  # "crates/core/renderer/backend/dx12",  # add when you create it
 ]
 
 [profile.release]

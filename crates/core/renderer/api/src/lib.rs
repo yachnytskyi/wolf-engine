@@ -1,6 +1,4 @@
-pub mod error;
-
-use crate::error::Result;
+use common::model::error::Result;
 use winit::{
     event::WindowEvent,
     event_loop::ActiveEventLoop,

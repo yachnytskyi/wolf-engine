@@ -1,7 +1,6 @@
-// src/app.rs
+use common::model::error::Result;
+use renderer_api::Renderer;
 
-use crate::core::renderer::api::Renderer;
-use crate::error::Result;
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,

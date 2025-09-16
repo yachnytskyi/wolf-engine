@@ -3,13 +3,18 @@ name    = "wolf-engine"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["vulkan"]
+vulkan = ["dep:backend-vulkan"]
+
 [dependencies]
-# API + chosen backend:
-wolf-renderer-api   = { path = "../crates/core/renderer/api" }
-wolf-backend-vulkan = { path = "../crates/core/renderer/backend/vulkan" }
+common         = { path = "../common", features = ["winit"] }
+renderer-api   = { path = "../crates/core/renderer/api" }
+backend-vulkan = { path = "../crates/core/renderer/backend/vulkan", optional = true }
+winit          = "*"
+env_logger     = "*"
+log            = "*"
 
-# Only what the APP uses directly:
-winit      = "*"      
-log        = "*"      
-env_logger = "*"    
-
+[alias]
+release-with-debug = "run --profile release-with-debug -p wolf-engine"
+release-with-full-debug = "run --profile release-with-full-debug -p wolf-engine"

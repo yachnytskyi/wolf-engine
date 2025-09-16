@@ -1,9 +1,10 @@
 [package]
-name    = "wolf-renderer-api"
+name    = "renderer-api"
 version = "0.1.0"
 edition = "2024"
 resolver = "3"
 
 [dependencies]
+common            = { path = "../../../../common" }
 winit             = "*"
 
