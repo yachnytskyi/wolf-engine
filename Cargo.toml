@@ -17,6 +17,7 @@ env_logger  = "*"
 log         = "*"
 libloading  = "*"
 vulkanalia  = "*"
+smallvec    = "*" 
 
 common         = { path = "common" }
 renderer-api   = { path = "crates/core/renderer/api" }

@@ -3,14 +3,14 @@ name    = "common"
 version.workspace = true
 edition.workspace = true
 
-[features]
 # Keep base crate dependency-free; enable converters only when needed.
+[features]
 winit      = ["dep:winit"]
 libloading = ["dep:libloading"]
 vulkan     = ["dep:vulkanalia"]
 
-[dependencies]
 # Optional deps, pulled only if a crate enables the feature.
+[dependencies]
 winit      = { workspace = true, optional = true }
 libloading = { workspace = true, optional = true }
 vulkanalia = { workspace = true, optional = true }
