@@ -1970,14 +1970,32 @@ dependencies = [
 ]
 
 [[package]]
-name = "wolf-engine"
+name = "wolf-backend-vulkan"
 version = "0.1.0"
 dependencies = [
- "env_logger",
  "libloading",
  "log",
  "smallvec",
  "vulkanalia",
+ "winit",
+ "wolf-renderer-api",
+]
+
+[[package]]
+name = "wolf-engine"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "log",
+ "winit",
+ "wolf-backend-vulkan",
+ "wolf-renderer-api",
+]
+
+[[package]]
+name = "wolf-renderer-api"
+version = "0.1.0"
+dependencies = [
  "winit",
 ]
 

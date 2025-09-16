@@ -1,0 +1,15 @@
+[package]
+name    = "wolf-engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# API + chosen backend:
+wolf-renderer-api   = { path = "../crates/core/renderer/api" }
+wolf-backend-vulkan = { path = "../crates/core/renderer/backend/vulkan" }
+
+# Only what the APP uses directly:
+winit      = "*"      
+log        = "*"      
+env_logger = "*"    
+

@@ -6,11 +6,11 @@ use vulkanalia::vk::ExtDebugUtilsExtension;
 #[cfg(debug_assertions)]
 use log::{error, warn};
 
-use crate::core::renderer::api::Renderer;
-use crate::error::Result;
 use log::info;
 use smallvec::SmallVec;
 use std::ffi::CStr;
+use wolf_renderer_api::Renderer;
+use wolf_renderer_api::error::Result;
 
 use vulkanalia::loader::{LIBRARY, LibloadingLoader};
 use vulkanalia::prelude::v1_0::*;
@@ -594,8 +594,7 @@ fn create_debug_messenger(
     instance: &Instance,
     ci: &vk::DebugUtilsMessengerCreateInfoEXT,
 ) -> vk::DebugUtilsMessengerEXT {
-    unsafe { instance.create_debug_utils_messenger_ext(ci, None) }
-        .expect("debug utils messenger")
+    unsafe { instance.create_debug_utils_messenger_ext(ci, None) }.expect("debug utils messenger")
 }
 
 #[cfg(debug_assertions)]
