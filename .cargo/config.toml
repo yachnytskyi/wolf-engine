@@ -1,0 +1,3 @@
+[alias]
+release-with-debug      = "run --profile release-with-debug -p wolf-engine"
+release-with-full-debug = "run --profile release-with-full-debug -p wolf-engine"
