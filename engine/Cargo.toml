@@ -1,20 +1,17 @@
 [package]
-name    = "wolf-engine"
-version = "0.1.0"
-edition = "2024"
+name = "wolf-engine"
+edition.workspace = true
+version.workspace = true
 
 [features]
 default = ["vulkan"]
 vulkan = ["dep:backend-vulkan"]
 
 [dependencies]
-common         = { path = "../common", features = ["winit"] }
-renderer-api   = { path = "../crates/core/renderer/api" }
-backend-vulkan = { path = "../crates/core/renderer/backend/vulkan", optional = true }
-winit          = "*"
-env_logger     = "*"
-log            = "*"
+common         = { workspace = true, features = ["winit"] }
+renderer-api   = { workspace = true }
+backend-vulkan = { workspace = true, optional = true }
 
-[alias]
-release-with-debug = "run --profile release-with-debug -p wolf-engine"
-release-with-full-debug = "run --profile release-with-full-debug -p wolf-engine"
+winit      = { workspace = true }
+env_logger = { workspace = true }
+log        = { workspace = true }
