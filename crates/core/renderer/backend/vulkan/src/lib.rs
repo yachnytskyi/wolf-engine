@@ -6,9 +6,9 @@ use vulkanalia::vk::ExtDebugUtilsExtension;
 #[cfg(debug_assertions)]
 use log::{error, warn};
 
-use crate::core::renderer::api::Renderer;
-use crate::error::Result;
+use common::model::error::Result;
 use log::info;
+use renderer_api::Renderer;
 use smallvec::SmallVec;
 use std::ffi::CStr;
 
@@ -74,14 +74,14 @@ impl VulkanRenderer {
                 }
 
                 // Destroy render pass
-                if let Some(rp) = self.render_pass {
-                    device.destroy_render_pass(rp, None);
+                if let Some(render_pass) = self.render_pass {
+                    device.destroy_render_pass(render_pass, None);
                 }
                 self.render_pass = None;
 
                 // Destroy swapchain image views
-                for iv in self.swapchain_image_views.drain(..) {
-                    device.destroy_image_view(iv, None);
+                for image_view in self.swapchain_image_views.drain(..) {
+                    device.destroy_image_view(image_view, None);
                 }
 
                 // Destroy swapchain
@@ -323,7 +323,7 @@ impl Renderer for VulkanRenderer {
         let mut exts: SmallVec<[*const i8; 8]> =
             vk_window::get_required_instance_extensions(window)
                 .iter()
-                .map(|e| e.as_ptr())
+                .map(|error| error.as_ptr())
                 .collect();
 
         // Add debug utils extension in debug builds
@@ -434,8 +434,9 @@ impl Renderer for VulkanRenderer {
             .expect("Failed to enumerate physical devices");
         let (physical_device, graphics_family, present_family) = devices
             .iter()
-            .find_map(|&dev| {
-                let props = unsafe { instance.get_physical_device_queue_family_properties(dev) };
+            .find_map(|&physica_device| {
+                let props =
+                    unsafe { instance.get_physical_device_queue_family_properties(physica_device) };
                 let mut graphics_index = None;
                 let mut present_index = None;
                 for (i, info) in props.iter().enumerate() {
@@ -444,15 +445,20 @@ impl Renderer for VulkanRenderer {
                     }
                     let present_support = unsafe {
                         instance
-                            .get_physical_device_surface_support_khr(dev, i as u32, surface)
+                            .get_physical_device_surface_support_khr(
+                                physica_device,
+                                i as u32,
+                                surface,
+                            )
                             .unwrap()
                     };
                     if present_support {
                         present_index = Some(i as u32);
                     }
                 }
-                if let (Some(g), Some(p)) = (graphics_index, present_index) {
-                    Some((dev, g, p))
+                if let (Some(graphics_index), Some(present_index)) = (graphics_index, present_index)
+                {
+                    Some((physica_device, graphics_index, present_index))
                 } else {
                     None
                 }
@@ -465,8 +471,8 @@ impl Renderer for VulkanRenderer {
                 .enumerate_device_extension_properties(physical_device, None)
                 .expect("Failed to enumerate device extensions")
                 .iter()
-                .any(|e| {
-                    CStr::from_ptr(e.extension_name.as_ptr())
+                .any(|error| {
+                    CStr::from_ptr(error.extension_name.as_ptr())
                         == KHR_PORTABILITY_SUBSET_EXTENSION_NAME
                 })
         };
@@ -594,8 +600,7 @@ fn create_debug_messenger(
     instance: &Instance,
     ci: &vk::DebugUtilsMessengerCreateInfoEXT,
 ) -> vk::DebugUtilsMessengerEXT {
-    unsafe { instance.create_debug_utils_messenger_ext(ci, None) }
-        .expect("debug utils messenger")
+    unsafe { instance.create_debug_utils_messenger_ext(ci, None) }.expect("debug utils messenger")
 }
 
 #[cfg(debug_assertions)]

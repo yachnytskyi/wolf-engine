@@ -1,0 +1,18 @@
+[package]
+name = "backend-vulkan"
+version.workspace = true      # keep version in sync with workspace
+edition.workspace = true      # inherit edition 2024
+
+# Keep base crate dependency-free; enable converters only when needed.
+[dependencies]
+common       = { workspace = true, features = ["vulkan", "libloading", "winit"] }
+renderer-api = { workspace = true }
+
+smallvec   = { workspace = true }
+log        = { workspace = true }
+winit      = { workspace = true }
+libloading = { workspace = true }
+
+# Vulkan binding
+# Needs extra features, so we specify them explicitly here.
+vulkanalia = { workspace = true, features = ["window", "libloading"] }

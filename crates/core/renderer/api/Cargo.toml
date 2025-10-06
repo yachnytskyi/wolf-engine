@@ -1,0 +1,9 @@
+[package]
+name = "renderer-api"
+version.workspace = true
+edition.workspace = true
+
+# Optional deps, pulled only if a crate enables the feature.
+[dependencies]
+common = { workspace = true, features = ["winit"] }
+winit  = { workspace = true }

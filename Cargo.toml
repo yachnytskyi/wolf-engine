@@ -1,40 +1,41 @@
-[profile.release]                 # normal release
+[workspace]
+resolver = "3"
+members = [
+  "engine",
+  "common",
+  "crates/core/renderer/api",
+  "crates/core/renderer/backend/vulkan",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+
+[workspace.dependencies]
+winit       = "*"
+env_logger  = "*"
+log         = "*"
+libloading  = "*"
+vulkanalia  = "*"
+smallvec    = "*" 
+
+common         = { path = "common" }
+renderer-api   = { path = "crates/core/renderer/api" }
+backend-vulkan = { path = "crates/core/renderer/backend/vulkan" }
+
+[profile.release]
 opt-level = 3
 debug-assertions = false
 overflow-checks = false
 
-[profile.release-with-debug]      # release + line tables + assertions
+[profile.release-with-debug]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
-debug = 1                         # line info (set to 2 for full symbols)
+debug = 1
 
-[profile.release-with-full-debug] # release + full debug info + assertions
+[profile.release-with-full-debug]
 inherits = "release"
 debug-assertions = true
 overflow-checks = true
 debug = 2
-
-[alias]
-release-with-debug = "run --profile release-with-debug"
-release-with-full-debug = "run --profile release-with-full-debug"
-# (optional) build-only aliases:
-# release-with-debug-build = "build --profile release-with-debug"
-# release-with-full-debug-build = "build --profile release-with-full-debug"
-
-[features]
-default = ["vulkan"]
-vulkan = ["dep:vulkanalia", "dep:libloading"]
-
-[package]
-name    = "wolf-engine"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-smallvec   = "*"
-vulkanalia = { version = "*", features = ["window", "libloading"], optional = true }
-winit      = "*"
-log        = "*"
-env_logger = "*"
-libloading = { version = "*", optional = true }

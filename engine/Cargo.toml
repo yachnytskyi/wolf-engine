@@ -1,0 +1,17 @@
+[package]
+name = "wolf-engine"
+edition.workspace = true
+version.workspace = true
+
+[features]
+default = ["vulkan"]
+vulkan = ["dep:backend-vulkan"]
+
+[dependencies]
+common         = { workspace = true, features = ["winit"] }
+renderer-api   = { workspace = true }
+backend-vulkan = { workspace = true, optional = true }
+
+winit      = { workspace = true }
+env_logger = { workspace = true }
+log        = { workspace = true }
