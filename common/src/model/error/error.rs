@@ -15,14 +15,14 @@ pub enum AppError {
 }
 
 impl fmt::Display for AppError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Lib(e) => write!(f, "libloading: {e}"),
+            Self::Lib(error) => write!(formatter, "libloading: {error}"),
             Self::Vk(result, ctx) => {
-                write!(f, "Vulkan error: {:?} (context: {})", result, ctx)
+                write!(formatter, "Vulkan error: {:?} (context: {})", result, ctx)
             }
-            Self::Winit(e) => write!(f, "winit: {e}"),
-            Self::Loader(e) => write!(f, "loader error: {}", e),
+            Self::Winit(error) => write!(formatter, "winit: {error}"),
+            Self::Loader(error) => write!(formatter, "loader error: {}", error),
         }
     }
 }
@@ -33,25 +33,25 @@ impl StdError for AppError {}
 pub type Result<T> = std::result::Result<T, AppError>;
 
 impl From<LibloadingError> for AppError {
-    fn from(e: LibloadingError) -> Self {
-        Self::Lib(e)
+    fn from(error: LibloadingError) -> Self {
+        Self::Lib(error)
     }
 }
 
 impl From<vk::Result> for AppError {
-    fn from(e: vk::Result) -> Self {
-        Self::Vk(e, "unspecified")
+    fn from(error: vk::Result) -> Self {
+        Self::Vk(error, "unspecified")
     }
 }
 
 impl From<EventLoopError> for AppError {
-    fn from(e: EventLoopError) -> Self {
-        Self::Winit(e)
+    fn from(error: EventLoopError) -> Self {
+        Self::Winit(error)
     }
 }
 
 impl From<Box<dyn LoaderError>> for AppError {
-    fn from(e: Box<dyn LoaderError>) -> Self {
-        Self::Loader(e)
+    fn from(error: Box<dyn LoaderError>) -> Self {
+        Self::Loader(error)
     }
 }
